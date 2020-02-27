@@ -23,6 +23,14 @@ WHITE = 1
 NON_WHITE = 0
 MODEL_RACE_BLIND_PATH = 'model_race_blind.pt'
 MODEL_PATH = 'model.pt'
+# thresholds as a function of protected characteristics
+# cost is number of people classified differently based on change to the classifier
+# calibration
+# equity
+# causal fairness paper (maybe ucl), arguing its in mportant to include protected characteristics in classifier
+# can compensate for other problems
+
+# backprop cost functions,
 
 
 def plot_hist(X, Y_hat):
@@ -36,15 +44,28 @@ def plot_hist(X, Y_hat):
             non_white_ys.append(Y_hat[i])
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    n, bins, rectangles = ax.hist(np.asarray(
-        white_ys), 10, alpha=0.8, density=True, label='white')
-    n, bins, rectangles = ax.hist(np.asarray(
-        non_white_ys), 10, alpha=0.5, density=True, label='non_white')
+    n, bins, rectangles = ax.hist(
+        np.asarray(white_ys),
+        10, alpha=0.8, density=True, label='white')
+    n, bins, rectangles = ax.hist(
+        np.asarray(non_white_ys),
+        10, alpha=0.5, density=True, label='non_white')
     # plt.hist(np.asarray(white_ys),bins,alpha=0.5,label='white')
     # plt.hist(np.asarray(non_white_ys),bins,alpha=0.5,label='non_white')
     plt.legend(loc='upper right')
     fig.canvas.draw()
     plt.show()
+
+
+def print_confusion_matrix(M):
+    print("          | PRED: NO | PRED: YES |")
+    print("-------------------------------")
+    print("ACTL:   NO| "+str(round(M[0, 0], 3)) +
+          "    | "+str(round(M[0, 1], 3))+"     |")
+    print("-------------------------------")
+    print("ACTL:  YES| "+str(round(M[1, 0], 3)) +
+          "    | "+str(round(M[1, 1], 3))+"     |")
+    print("-------------------------------")
 
 
 def print_matrix(M):
@@ -58,7 +79,151 @@ def print_matrix(M):
     print("-------------------------------")
 
 
-def getAccuracies(X, Y_hat, Y):
+def getCalibration(X, Y_hat, Y, thresholds):
+    return
+
+
+def get_threshold_pairs(X, Y_hat, target, precision=100):
+    li = []
+    recids = 0
+    # epsilon gives percentage distance we are willing to deviate from our target number of arrests in order to consider a threshold pair
+    epsilon = 0.05
+    for big_i in range(precision):
+        i = big_i/precision
+        for big_j in range(precision):
+            j = big_j/precision
+            thresholds = [i, j]
+            recids = 0
+            for x in range(len(Y_hat)):
+                # prediction 1 = recid, 0 = no recid
+                race = int(X[x, RACE_COL])
+                if (Y_hat[x] > thresholds[race]):
+                    recids += 1
+            # if number predicted to recid is approx equal to target
+            if(abs(recids - target) < epsilon*target):
+                # print(str(i)+","+str(j)+" gives "+str(recids)+" positives")
+                li.append(thresholds)
+    # print(len(li))
+    return li
+
+
+def get_statistical_parity(X, Y_hat, Y, thresholds):
+    confusion_matrices = [np.zeros((2, 2)), np.zeros((2, 2))]
+
+    pos_outcomes = np.zeros(2)
+
+    counts = np.zeros(2)
+    # positive -> predicted to recid
+    # true -> correct prediction
+    # Different actors want different minimisations
+
+    for i in range(len(Y_hat)):
+        # prediction 1 = recid, 0 = no recid
+        race = int(X[i, RACE_COL])
+        if (Y_hat[i] > thresholds[race]):
+            y_hat = 1
+        else:
+            y_hat = 0
+        pos_outcomes[race] += y_hat
+
+        counts[race] += 1
+    P_favoured_outcome_non_white = ((counts[NON_WHITE]-pos_outcomes[NON_WHITE])/counts[NON_WHITE])
+    P_favoured_outcome_white = ((counts[WHITE]-pos_outcomes[WHITE])/counts[WHITE])
+    epsilon = (P_favoured_outcome_non_white/P_favoured_outcome_white)
+    # print("p(Y_hat|non_white) "+str(P_favoured_outcome_non_white))
+    # print("p(Y_hat|white) "+str(P_favoured_outcome_white))
+    # print(str(abs(epsilon*100))+" percent fair")
+
+    return abs(1-epsilon)
+
+
+def get_confusion_matrices(X, Y_hat, Y, thresholds):
+    confusion_matrices = [
+        np.zeros((2, 2)),
+        np.zeros((2, 2))]
+
+    counts = np.zeros(2)
+    trues = np.zeros(2)
+    falses = np.zeros(2)
+    true_positives = np.zeros(2)
+    true_negatives = np.zeros(2)
+    false_positives = np.zeros(2)
+    false_negatives = np.zeros(2)
+    # positive -> will recid
+    # true -> correct prediction
+    # Different actors want different minimisations
+    # The individual wants to minimise False Positives i.e. Chance of wrongly being predicted to reoffend
+    # The system wants to minimise False Negatives i.e. Chance of letting someone go who would reoffend
+    for i in range(len(Y_hat)):
+        # prediction 1 = recid, 0 = no recid
+        race = int(X[i, RACE_COL])
+        if (Y_hat[i] > thresholds[race]):
+            y_hat = 1
+        else:
+            y_hat = 0
+        counts[race] += 1
+        # if correct
+        if (y_hat == Y[i]):
+            trues[race] += 1
+            # and will recid
+            if (y_hat == 1):
+                true_positives[race] += 1
+            # and will not recid
+            else:
+                true_negatives[race] += 1
+        # if incorrect
+        else:
+            # and will recid
+            if (y_hat == 1):
+                false_positives[race] += 1
+            # and will not recid
+            else:
+                false_negatives[race] += 1
+    falses = counts-trues
+    for i in range(2):
+        race = i
+        # print("------------------------------")
+        # print("RACE = " + str(i))
+        # print("COUNT = " + str(counts[race]))
+        CM = confusion_matrices[race]
+
+        # true negatives
+        CM[0, 0] = true_negatives[race] / (
+            true_negatives[race]+false_positives[race])
+
+        # false positives
+        CM[0, 1] = false_positives[race] / (
+            true_negatives[race]+false_positives[race])
+
+        # false negatives
+        CM[1, 0] = false_negatives[race] / (
+            true_positives[race]+false_positives[race])
+
+        # true positives
+        CM[1, 1] = true_positives[race] / (
+            true_positives[race]+false_positives[race])
+        confusion_matrices[race] = CM
+        # print_confusion_matrix(CM)
+    return confusion_matrices
+
+
+def get_equalised_odds(X, Y_hat, Y, thresholds):
+    confusion_matrices = get_confusion_matrices(X, Y_hat, Y, thresholds)
+    CM_DIFF = confusion_matrices[NON_WHITE] - confusion_matrices[WHITE]
+    # for dTPR, this is actually false negatives because we want the odds of a positive outcome for the users across groups to be equal.
+
+    # dTPR = CM_DIFF[1, 1]
+    # dFPR = CM_DIFF[0, 1]
+
+    dTPR = CM_DIFF[0, 0]
+    dFPR = CM_DIFF[1, 0]
+
+    # print("dTPR = " + str(dTPR))
+    # print("dFPR = " + str(dFPR))
+    return abs(dTPR), abs(dFPR)
+
+
+def getAccuracies(X, Y_hat, Y, thresholds):
     count_matrix = np.zeros((2, 2))
     true_matrix = np.zeros((2, 2))
     false_matrix = np.zeros((2, 2))
@@ -77,12 +242,13 @@ def getAccuracies(X, Y_hat, Y):
         # prediction 1 = recid, 0 = no recid
         y_hat = round(Y_hat[i])
         group = [int(X[i, GENDER_COL]), int(X[i, RACE_COL])]
+        race = int(X[i, RACE_COL])
         count_matrix[group[0], group[1]] += 1
         # if correct
         if (y_hat == Y[i]):
             true_matrix[group[0], group[1]] += 1
             # and will recid
-            if (y_hat == 1):
+            if (y_hat > thresholds[race]):
                 true_positive_matrix[group[0], group[1]] += 1
             # and will not recid
             else:
@@ -90,7 +256,7 @@ def getAccuracies(X, Y_hat, Y):
         # if incorrect
         else:
             # and will recid
-            if (y_hat == 1):
+            if (y_hat > thresholds[race]):
                 false_positive_matrix[group[0], group[1]] += 1
             # and will not recid
             else:
@@ -104,17 +270,18 @@ def getAccuracies(X, Y_hat, Y):
     # pprint(true_positive_matrix/(true_positive_matrix + false_negative_matrix))
     # print("------------------------------")
     print("FPR matrix - predicted to reoffend, but didn't: ")
-    print_matrix(false_positive_matrix /
-                 (true_positive_matrix + false_negative_matrix))
+    print_matrix(
+        false_positive_matrix /
+        (true_positive_matrix + false_negative_matrix))
     print("------------------------------")
     print("FNR matrix - predicted NOT to reoffend, but did: ")
-    print_matrix(false_positive_matrix /
-                 (false_positive_matrix + true_negative_matrix))
+    print_matrix(
+        false_positive_matrix /
+        (false_positive_matrix + true_negative_matrix))
     print("------------------------------")
 
 
-def getDatasetBaseRates(X, Y):
-
+def get_dataset_base_rates_intersectional(X, Y):
     (rows, cols) = X.shape
     # M  F
     # 0  0 NON-WHITE
@@ -158,37 +325,77 @@ def getDatasetBaseRates(X, Y):
     print("------------------------------")
 
 
+def get_weighted_average_base(X, Y):
+
+    (rows, cols) = X.shape
+    # M  F
+    # 0  0 NON-WHITE
+    # 0  0 WHITE
+    count_matrix = np.zeros((2, 2))
+    reoffend_matrix = np.zeros((2, 2))
+    recid_rate_matrix = np.zeros((2, 2))
+
+    for i in range(rows):
+        if (X[i, GENDER_COL] == MALE and X[i, RACE_COL] == WHITE):
+            count_matrix[MALE, WHITE] += 1
+            if (Y[i] >= 0.5):
+                reoffend_matrix[MALE, WHITE] += 1
+        if (X[i, GENDER_COL] == MALE and X[i, RACE_COL] == NON_WHITE):
+            count_matrix[MALE, NON_WHITE] += 1
+            if (Y[i] >= 0.5):
+                reoffend_matrix[MALE, NON_WHITE] += 1
+
+        if (X[i, GENDER_COL] == FEMALE and X[i, RACE_COL] == WHITE):
+            count_matrix[FEMALE, WHITE] += 1
+            if (Y[i] >= 0.5):
+                reoffend_matrix[FEMALE, WHITE] += 1
+        if (X[i, GENDER_COL] == FEMALE and X[i, RACE_COL] == NON_WHITE):
+            count_matrix[FEMALE, NON_WHITE] += 1
+            if (Y[i] >= 0.5):
+                reoffend_matrix[FEMALE, NON_WHITE] += 1
+
+    recid_rate_matrix = reoffend_matrix/count_matrix
+    total_count = np.sum(count_matrix)
+    weighted_base_rate = (count_matrix[MALE, WHITE]*recid_rate_matrix[MALE, WHITE]
+                          + count_matrix[FEMALE, WHITE]*recid_rate_matrix[FEMALE, WHITE]
+                          + count_matrix[MALE, NON_WHITE]*recid_rate_matrix[MALE, NON_WHITE]
+                          + count_matrix[FEMALE, NON_WHITE]*recid_rate_matrix[FEMALE, NON_WHITE]) / total_count
+    print("Weighted Average Base Rate: "+str(weighted_base_rate))
+    return weighted_base_rate
+
+
 from_csv = True
 race_blind = True
-if (not from_csv):
-    dataset = load_preproc_data_compas(['race'])
-    dataset_train, dataset_test = dataset.split([0.7], shuffle=True)
+# if (not from_csv):
+#     dataset = load_preproc_data_compas(['race'])
+#     dataset_train, dataset_test = dataset.split([0.7], shuffle=True)
 
-    frame, dic = dataset_train.convert_to_dataframe()
-    frame_test, dic_test = dataset_test.convert_to_dataframe()
-    # frame.to_csv('out.csv')
-    Z_train = frame.to_numpy()
-    Z_test = frame_test.to_numpy()
+#     frame, dic = dataset_train.convert_to_dataframe()
+#     frame_test, dic_test = dataset_test.convert_to_dataframe()
+#     # frame.to_csv('out.csv')
+#     Z_train = frame.to_numpy()
+#     Z_test = frame_test.to_numpy()
+# else:
+Z = np.loadtxt('compas_data.csv', delimiter=',')
+Z = Z[1:, 1:]
+print("------------------------------")
+print("Dataset base rates:")
+get_dataset_base_rates_intersectional(Z, Z[:, -1])
+BASE = get_weighted_average_base(Z, Z[:, -1])
+(rows, cols) = Z.shape
+train_rows = round(0.7*rows)
+if (race_blind):
+    c = 9
+    Z_protected_removed = np.delete(Z, RACE_COL, axis=1)
+    Z_train = Z_protected_removed[:train_rows, :]
+    Z_test = Z_protected_removed[train_rows:, :]
 else:
-    Z = np.loadtxt('compas_data.csv', delimiter=',')
-    Z = Z[1:, 1:]
-    print("------------------------------")
-    print("Dataset base rates:")
-    getDatasetBaseRates(Z, Z[:, -1])
-    (rows, cols) = Z.shape
-    train_rows = round(0.7*rows)
-    if (race_blind):
-        c = 9
-        Z_protected_removed = np.delete(Z, RACE_COL, axis=1)
-        Z_train = Z_protected_removed[:train_rows, :]
-        Z_test = Z_protected_removed[train_rows:, :]
-    else:
-        c = 10
-        Z_train = Z[:train_rows, :]
-        Z_test = Z[train_rows:, :]
+    c = 10
+    Z_train = Z[:train_rows, :]
+    Z_test = Z[train_rows:, :]
 
-    Z_test_race_included = Z[train_rows:, :]
-    # print(Z_test.shape)
+Z_test_race_included = Z[train_rows:, :]
+# print(Z_test.shape)
 
 X_train_np = Z_train[:, :-1]
 Y_train_np = Z_train[:, -1]
@@ -205,12 +412,13 @@ class MyClassifier(nn.Module):
     def __init__(self, c):
         super(MyClassifier, self).__init__()
 
-        self.fc1 = nn.Linear(c, 100)
+        self.fc1 = nn.Linear(c, 20)
 
         # This applies linear transformation to produce output data
-        self.fc2 = nn.Linear(100, 100)
-        self.fc3 = nn.Linear(100, 100)
-        self.fc4 = nn.Linear(100, 1)
+        self.fc2 = nn.Linear(20, 20)
+        self.fc3 = nn.Linear(20, 20)
+        self.fc4 = nn.Linear(20, 20)
+        self.fc5 = nn.Linear(20, 1)
 
     def forward(self, x):
 
@@ -218,13 +426,15 @@ class MyClassifier(nn.Module):
         x = self.fc1(x)
 
         # Activation function
-        x = torch.tanh(x)
+        x = torch.sigmoid(x)
         # layer 2
         x = self.fc2(x)
         # layer 3
         x = self.fc3(x)
-        # output
+        # layer 4
         x = self.fc4(x)
+        # output
+        x = self.fc5(x)
         return x
 
     # predicts the class (0 == low recid or 1 == high recid)
@@ -243,7 +453,8 @@ if (training):
     criterion = nn.BCEWithLogitsLoss()
 
     # Define the optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    optimizer = torch.optim.Adam(
+        model.parameters(), lr=0.01)
 
     # Number of epochs
     epochs = 4000
@@ -268,18 +479,19 @@ if (training):
             print(loss)
             print(str(i/epochs * 100) + "%")
         if (race_blind):
-            torch.save(model.state_dict(), MODEL_RACE_BLIND_PATH)
+            torch.save(
+                model.state_dict(),
+                MODEL_RACE_BLIND_PATH)
         else:
             torch.save(model.state_dict(), MODEL_PATH)
-
 else:
     if (race_blind):
-        model.load_state_dict(torch.load(MODEL_RACE_BLIND_PATH))
+        model.load_state_dict(
+            torch.load(MODEL_RACE_BLIND_PATH))
     else:
         model.load_state_dict(torch.load(MODEL_PATH))
     model.eval()
 
-    # Nums = Z[:, 0]
 X_test_np = Z_test[:, :-1]
 Y_test_np = Z_test[:, -1]
 successes = 0
@@ -288,19 +500,65 @@ predictions = []
 for i in range(0, inputs):
     X_pred = torch.tensor(X_test_np[i, :], dtype=torch.float)
     # pprint(X_pred)
-    y_star = Y_test_np[i]
+    # y_star = Y_test_np[i]
     prediction = model.predict(X_pred)
     y_hat = prediction.item()
     predictions.append(y_hat)
-plot_hist(Z_test_race_included, predictions)
 
+# plot_hist(Z_test_race_included, predictions)
+thresholds = get_threshold_pairs(Z_test_race_included, np.asarray(predictions), BASE * len(predictions))
 
-print("------------------------------")
-print("Prediction rates:")
-getDatasetBaseRates(Z_test_race_included, np.asarray(predictions))
+min_EQ_odds = 10000
+min_dTPR = 10000
+min_dTPR_ts = [0, 0]
+min_dFPR = 10000
+min_dFPR_ts = [0, 0]
+min_statistical_parity = 10000
+min_statistical_parity_ts = [0, 0]
+for ts in thresholds:
+    dTPR, dFPR = get_equalised_odds(Z_test_race_included, np.asarray(predictions), Y_test_np, ts)
+    statistical_parity = get_statistical_parity(Z_test_race_included, np.asarray(predictions), Y_test_np, ts)
+    if (min_dTPR > dTPR):
+        # print("new min dTPR "+str(min_dTPR))
+        min_dTPR = dTPR
+        min_dTPR_ts = ts
 
-getAccuracies(Z_test_race_included, np.asarray(predictions), Y_test_np)
+    if (min_dFPR > dFPR):
+        # print("new min dFPR "+str(min_dTPR))
+        min_dFPR = dFPR
+        min_dFPR_ts = ts
 
-# print("------------------------------")
-# print("Test data rates:")
-# getDatasetBaseRates(Z_test_race_included, Y_test_np)
+    if (min_statistical_parity > statistical_parity):
+        # print("new min SP "+str(min_statistical_parity))
+        min_statistical_parity = statistical_parity
+        min_statistical_parity_ts = ts
+
+print("")
+print("min_dTPR = "+str(min_dTPR)+" at "+str(min_dTPR_ts))
+# cms = getAccuracies(Z_test_race_included, np.asarray(predictions), Y_test_np, min_dTPR_ts)
+cms = get_confusion_matrices(Z_test_race_included, np.asarray(predictions), Y_test_np, min_dTPR_ts)
+print("non_white")
+print_confusion_matrix(cms[0])
+print("white")
+print_confusion_matrix(cms[1])
+print("")
+print("")
+print("")
+print("min_dFPR = "+str(min_dFPR)+" at "+str(min_dFPR_ts))
+# cms = getAccuracies(Z_test_race_included, np.asarray(predictions), Y_test_np, min_dFPR_ts)
+cms = get_confusion_matrices(Z_test_race_included, np.asarray(predictions), Y_test_np, min_dFPR_ts)
+print("non_white")
+print_confusion_matrix(cms[0])
+print("white")
+print_confusion_matrix(cms[1])
+print("")
+print("")
+print("")
+print("min_SP = "+str(min_statistical_parity)+" at "+str(min_statistical_parity_ts))
+# cms = getAccuracies(Z_test_race_included, np.asarray(predictions), Y_test_np, min_statistical_parity_ts)
+cms = get_confusion_matrices(Z_test_race_included, np.asarray(predictions), Y_test_np, min_statistical_parity_ts)
+print("non_white:")
+print_confusion_matrix(cms[0])
+print("white")
+print_confusion_matrix(cms[1])
+print("")

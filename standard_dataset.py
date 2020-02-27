@@ -7,15 +7,6 @@ from binary_label_dataset import BinaryLabelDataset
 
 
 class StandardDataset(BinaryLabelDataset):
-    """Base class for every :obj:`BinaryLabelDataset` provided out of the box by
-    aif360.
-
-    It is not strictly necessary to inherit this class when adding custom
-    datasets but it may be useful.
-
-    This class is very loosely based on code from
-    https://github.com/algofairness/fairness-comparison.
-    """
 
     def __init__(self, df, label_name, favorable_classes,
                  protected_attribute_names, privileged_classes,
@@ -39,12 +30,10 @@ class StandardDataset(BinaryLabelDataset):
 
             4. Drops rows with NA values.
 
-            5. Creates a one-hot encoding of the categorical variables.
-
-            6. Maps protected attributes to binary privileged/unprivileged
+            5. Maps protected attributes to binary privileged/unprivileged
                values (1/0).
 
-            7. Maps labels to binary favorable/unfavorable labels (1/0).
+            6. Maps labels to binary favorable/unfavorable labels (1/0).
 
         Args:
             df (pandas.DataFrame): DataFrame on which to perform standard

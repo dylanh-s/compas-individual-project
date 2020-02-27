@@ -487,13 +487,7 @@ class StructuredDataset(Dataset):
             set_category (bool): Set the de-dummy coded features
                     to categorical type
 
-        Examples:
-            >>> columns = ["Age", "Gender=Male", "Gender=Female"]
-            >>> df = pd.DataFrame([[10, 1, 0], [20, 0, 1]], columns=columns)
-            >>> _de_dummy_code_df(df, sep="=")
-               Age  Gender
-            0   10    Male
-            1   20  Female
+
         """
 
         feature_names_dum_d, feature_names_nodum = \
