@@ -6,12 +6,15 @@ import os
 import io
 import torch.nn as nn
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn.functional as F
+import enum
 from torch.utils.data import Dataset, DataLoader
 from compas_dataset import CompasDataset
 from data_preproc_functions import load_preproc_data_compas
+from matplotlib import cm
 
 OLD_AGE_COL = 3
 YOUNG_AGE_COL = 4
@@ -21,6 +24,15 @@ FEMALE = 1
 MALE = 0
 WHITE = 1
 NON_WHITE = 0
+
+
+class Metrics(enum.Enum):
+
+    dTPR = 0
+    dFPR = 1
+    SP = 2
+
+
 MODEL_RACE_BLIND_PATH = 'model_race_blind.pt'
 MODEL_PATH = 'model.pt'
 # thresholds as a function of protected characteristics
@@ -57,6 +69,44 @@ def plot_hist(X, Y_hat):
     plt.show()
 
 
+def fairness_2D_graphs(metric, thresholds, zs):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    xs, ys = [], []
+    for ts in thresholds:
+        xs.append(ts[0])
+        ys.append(ts[1])
+    axes = plt.gca()
+    axes.set_xlim([0, 1])
+    axes.set_ylim([0, 1])
+    p = ax.scatter(np.asarray(xs), np.asarray(ys), c=np.log(zs), cmap=cm.jet)
+    fig.colorbar(p)
+    plt.show()
+
+
+def fairness_3D_graphs(metric, thresholds, zs):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    xs, ys = [], []
+    for ts in thresholds:
+        xs.append(ts[0])
+        ys.append(ts[1])
+    print("xs"+str(len(xs)))
+    print("ys"+str(len(ys)))
+    print("zs"+str(len(zs)))
+    # xs, ys = np.meshgrid(xs, ys)
+
+    p = ax.scatter(np.asarray(xs), np.asarray(ys), np.log(zs), c=zs, zdir='z')
+    # p = ax.bar3d(
+    #     np.asarray(xs),
+    #     np.asarray(ys),
+    #     np.ones_like(zs),
+    #     0.01*np.ones_like(xs),
+    #     0.01*np.ones_like(ys),np.log(zs),shade=True)
+    # fig.canvas.draw()
+    plt.show()
+
+
 def print_confusion_matrix(M):
     print("          | PRED: NO | PRED: YES |")
     print("-------------------------------")
@@ -79,15 +129,94 @@ def print_matrix(M):
     print("-------------------------------")
 
 
-def getCalibration(X, Y_hat, Y, thresholds):
-    return
+def get_cost_of_switch(Y_hat_0, Y_hat_1, neg_to_pos_cost=1, pos_to_neg_cost=1):
+    cost = 0
+
+    for i in range(len(Y_hat_0)):
+        if (Y_hat_0[i] == 1 and Y_hat_1[i] == 0):
+            cost += pos_to_neg_cost
+            # print("cost_pos")
+        elif (Y_hat_0[i] == 0 and Y_hat_1[i] == 1):
+            cost += neg_to_pos_cost
+            # print("cost_neg")
+    return cost
 
 
-def get_threshold_pairs(X, Y_hat, target, precision=100):
+def probability_to_outcome(X, Y_hat, thresholds):
+    outcomes = np.zeros_like(Y_hat)
+    for i in range(len(Y_hat)):
+        # prediction 1 = recid, 0 = no recid
+        race = int(X[i, RACE_COL])
+        if (Y_hat[i] > thresholds[race]):
+            y_hat = 1
+        else:
+            y_hat = 0
+        outcomes[i] = y_hat
+    return outcomes
+
+
+def get_best_pairs(X, Y_hat, target, precision=100):
+    li = []
+    paired_ys = []
+    recids = 0
+    for big_i in range(precision):
+        i = big_i/precision
+        best = 1000000
+        best_j = -1
+
+        for big_j in range(precision):
+            j = big_j/precision
+            thresholds = [i, j]
+            recids = 0
+
+            for x in range(len(Y_hat)):
+                # prediction 1 = recid, 0 = no recid
+                race = int(X[x, RACE_COL])
+                if (Y_hat[x] > thresholds[race]):
+                    recids += 1
+            # if number predicted to recid is approx equal to target
+            if(abs(recids - target) < best):
+                # print(str(i)+","+str(j)+" gives "+str(recids)+" positives")
+                best = abs(recids-target)
+                best_j = j
+        li.append([i, best_j])
+        # print(str(i)+" , "+str(best_j))
+        paired_ys.append(best_j)
+    # print(len(li))
+
+    # go through again filling the ys with no corresponding xs
+    for big_y in range(precision):
+        y = big_y/100
+        if (y not in paired_ys):
+            count = 0
+            best = 1000000
+            best_j = -1
+            for big_j in range(precision):
+                j = big_j/precision
+                thresholds = [j, y]
+                recids = 0
+
+                for x in range(len(Y_hat)):
+                    # prediction 1 = recid, 0 = no recid
+                    race = int(X[x, RACE_COL])
+                    if (Y_hat[x] > thresholds[race]):
+                        recids += 1
+                # if number predicted to recid is approx equal to target
+                if(abs(recids - target) < best):
+                    # print(str(i)+","+str(x)+" gives "+str(recids)+" positives")
+                    best = abs(recids-target)
+                    best_j = j
+            # print(str(best_j)+" , "+str(y))
+            li.append([best_j, y])
+
+    return li
+
+
+def get_threshold_pairs(X, Y_hat, target, max_relaxation_of_target=0.1, precision=100):
     li = []
     recids = 0
     # epsilon gives percentage distance we are willing to deviate from our target number of arrests in order to consider a threshold pair
-    epsilon = 0.05
+    epsilon = max_relaxation_of_target
     for big_i in range(precision):
         i = big_i/precision
         for big_j in range(precision):
@@ -504,61 +633,74 @@ for i in range(0, inputs):
     prediction = model.predict(X_pred)
     y_hat = prediction.item()
     predictions.append(y_hat)
+print("done")
 
 # plot_hist(Z_test_race_included, predictions)
-thresholds = get_threshold_pairs(Z_test_race_included, np.asarray(predictions), BASE * len(predictions))
+# thresholds = get_threshold_pairs(Z_test_race_included, np.asarray(predictions), BASE * len(predictions))
+thresholds = get_best_pairs(Z_test_race_included, np.asarray(predictions), BASE * len(predictions))
+# thresholds = get_threshold_pairs(Z_test_race_included, np.asarray(predictions), BASE * len(predictions), 1.0)
 
-min_EQ_odds = 10000
-min_dTPR = 10000
-min_dTPR_ts = [0, 0]
-min_dFPR = 10000
-min_dFPR_ts = [0, 0]
-min_statistical_parity = 10000
-min_statistical_parity_ts = [0, 0]
+min = []
+min_ts = [[0, 0], [0, 0], [0, 0]]
+for met in Metrics:
+    min.append(10000)
+    min_ts.append([0, 0])
+zs = []
+zs_dTPR = []
+zs_dFPR = []
+zs_SP = []
+
+count = 0
 for ts in thresholds:
     dTPR, dFPR = get_equalised_odds(Z_test_race_included, np.asarray(predictions), Y_test_np, ts)
-    statistical_parity = get_statistical_parity(Z_test_race_included, np.asarray(predictions), Y_test_np, ts)
-    if (min_dTPR > dTPR):
-        # print("new min dTPR "+str(min_dTPR))
-        min_dTPR = dTPR
-        min_dTPR_ts = ts
+    SP = get_statistical_parity(Z_test_race_included, np.asarray(predictions), Y_test_np, ts)
 
-    if (min_dFPR > dFPR):
-        # print("new min dFPR "+str(min_dTPR))
-        min_dFPR = dFPR
-        min_dFPR_ts = ts
+    zs_dTPR.append(dTPR)
+    zs_dFPR.append(dFPR)
+    zs_SP.append(SP)
 
-    if (min_statistical_parity > statistical_parity):
-        # print("new min SP "+str(min_statistical_parity))
-        min_statistical_parity = statistical_parity
-        min_statistical_parity_ts = ts
+    if (min[Metrics.dTPR.value] > dTPR):
+        # print("new min dTPR "+str(min[Metrics.dTPR.value]))
+        min[Metrics.dTPR.value] = dTPR
+        min_ts[Metrics.dTPR.value] = ts
+
+    if (min[Metrics.dFPR.value] > dFPR):
+        # print("new min dFPR "+str(min[Metrics.dTPR.value]))
+        min[Metrics.dFPR.value] = dFPR
+        min_ts[Metrics.dFPR.value] = ts
+
+    if (min[Metrics.SP.value] > SP):
+        # print("new min SP "+str(min[Metrics.SP.value]))
+        min[Metrics.SP.value] = SP
+        min_ts[Metrics.SP.value] = ts
+    count += 1
+print("count= "+str(count))
+zs.append(zs_dTPR)
+zs.append(zs_dFPR)
+zs.append(zs_SP)
 
 print("")
-print("min_dTPR = "+str(min_dTPR)+" at "+str(min_dTPR_ts))
-# cms = getAccuracies(Z_test_race_included, np.asarray(predictions), Y_test_np, min_dTPR_ts)
-cms = get_confusion_matrices(Z_test_race_included, np.asarray(predictions), Y_test_np, min_dTPR_ts)
-print("non_white")
-print_confusion_matrix(cms[0])
-print("white")
-print_confusion_matrix(cms[1])
-print("")
-print("")
-print("")
-print("min_dFPR = "+str(min_dFPR)+" at "+str(min_dFPR_ts))
-# cms = getAccuracies(Z_test_race_included, np.asarray(predictions), Y_test_np, min_dFPR_ts)
-cms = get_confusion_matrices(Z_test_race_included, np.asarray(predictions), Y_test_np, min_dFPR_ts)
-print("non_white")
-print_confusion_matrix(cms[0])
-print("white")
-print_confusion_matrix(cms[1])
-print("")
-print("")
-print("")
-print("min_SP = "+str(min_statistical_parity)+" at "+str(min_statistical_parity_ts))
-# cms = getAccuracies(Z_test_race_included, np.asarray(predictions), Y_test_np, min_statistical_parity_ts)
-cms = get_confusion_matrices(Z_test_race_included, np.asarray(predictions), Y_test_np, min_statistical_parity_ts)
-print("non_white:")
-print_confusion_matrix(cms[0])
-print("white")
-print_confusion_matrix(cms[1])
-print("")
+switch_costs = np.zeros((len(Metrics), len(Metrics)))
+for met_i in Metrics:
+
+    fairness_2D_graphs(met_i, thresholds, np.asarray(zs[met_i.value]))
+
+    print("min "+met_i.name+" = "+str(min[met_i.value])+" at "+str(min_ts[met_i.value]))
+    cms = get_confusion_matrices(Z_test_race_included, np.asarray(predictions), Y_test_np, min_ts[met_i.value])
+    print("non_white")
+    print_confusion_matrix(cms[0])
+    print("white")
+    print_confusion_matrix(cms[1])
+    print("")
+    print("")
+    met_val = met_i.value
+    for met_j in Metrics:
+        # if (met_j.value > met_i.value):
+        outcomes_i = probability_to_outcome(Z_test_race_included, np.asarray(predictions), min_ts[met_i.value])
+        outcomes_j = probability_to_outcome(Z_test_race_included, np.asarray(predictions), min_ts[met_j.value])
+        switch_costs[met_i.value, met_j.value] = get_cost_of_switch(outcomes_i, outcomes_j)
+pprint(switch_costs)
+costs = np.sum(switch_costs, 1)
+print(costs)
+optimal = np.argmin(costs)
+print("best metric for cost minimisation is " + Metrics(optimal).name)
