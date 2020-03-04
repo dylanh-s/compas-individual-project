@@ -98,34 +98,34 @@ def fairness_3D_graphs(metric, thresholds, zs):
 
     p = ax.scatter(np.asarray(xs), np.asarray(ys), np.log(zs), c=zs, zdir='z')
     # p = ax.bar3d(
-    #     np.asarray(xs),
-    #     np.asarray(ys),
-    #     np.ones_like(zs),
-    #     0.01*np.ones_like(xs),
-    #     0.01*np.ones_like(ys),np.log(zs),shade=True)
+    #	 np.asarray(xs),
+    #	 np.asarray(ys),
+    #	 np.ones_like(zs),
+    #	 0.01*np.ones_like(xs),
+    #	 0.01*np.ones_like(ys),np.log(zs),shade=True)
     # fig.canvas.draw()
     plt.show()
 
 
 def print_confusion_matrix(M):
-    print("          | PRED: NO | PRED: YES |")
+    print("		  | PRED: NO | PRED: YES |")
     print("-------------------------------")
     print("ACTL:   NO| "+str(round(M[0, 0], 3)) +
-          "    | "+str(round(M[0, 1], 3))+"     |")
+          "	| "+str(round(M[0, 1], 3))+"	 |")
     print("-------------------------------")
     print("ACTL:  YES| "+str(round(M[1, 0], 3)) +
-          "    | "+str(round(M[1, 1], 3))+"     |")
+          "	| "+str(round(M[1, 1], 3))+"	 |")
     print("-------------------------------")
 
 
 def print_matrix(M):
-    print("         | MALE | FEMALE    |")
+    print("		 | MALE | FEMALE	|")
     print("-------------------------------")
     print("NON-WHITE| "+str(round(M[0, 0], 3)) +
-          " | "+str(round(M[0, 1], 3))+"    | ")
+          " | "+str(round(M[0, 1], 3))+"	| ")
     print("-------------------------------")
-    print("    WHITE| "+str(round(M[1, 0], 3)) +
-          " | "+str(round(M[1, 1], 3))+"    | ")
+    print("	WHITE| "+str(round(M[1, 0], 3)) +
+          " | "+str(round(M[1, 1], 3))+"	| ")
     print("-------------------------------")
 
 
@@ -496,14 +496,14 @@ def get_weighted_average_base(X, Y):
 from_csv = True
 race_blind = True
 # if (not from_csv):
-#     dataset = load_preproc_data_compas(['race'])
-#     dataset_train, dataset_test = dataset.split([0.7], shuffle=True)
+#	 dataset = load_preproc_data_compas(['race'])
+#	 dataset_train, dataset_test = dataset.split([0.7], shuffle=True)
 
-#     frame, dic = dataset_train.convert_to_dataframe()
-#     frame_test, dic_test = dataset_test.convert_to_dataframe()
-#     # frame.to_csv('out.csv')
-#     Z_train = frame.to_numpy()
-#     Z_test = frame_test.to_numpy()
+#	 frame, dic = dataset_train.convert_to_dataframe()
+#	 frame_test, dic_test = dataset_test.convert_to_dataframe()
+#	 # frame.to_csv('out.csv')
+#	 Z_train = frame.to_numpy()
+#	 Z_test = frame_test.to_numpy()
 # else:
 Z = np.loadtxt('compas_data.csv', delimiter=',')
 Z = Z[1:, 1:]
@@ -641,49 +641,39 @@ thresholds = get_best_pairs(Z_test_race_included, np.asarray(predictions), BASE 
 # thresholds = get_threshold_pairs(Z_test_race_included, np.asarray(predictions), BASE * len(predictions), 1.0)
 
 min = []
-min_ts = [[0, 0], [0, 0], [0, 0]]
+min_ts = []
+zs = []
+currents = []
 for met in Metrics:
     min.append(10000)
     min_ts.append([0, 0])
-zs = []
-zs_dTPR = []
-zs_dFPR = []
-zs_SP = []
 
 count = 0
 for ts in thresholds:
-    dTPR, dFPR = get_equalised_odds(Z_test_race_included, np.asarray(predictions), Y_test_np, ts)
-    SP = get_statistical_parity(Z_test_race_included, np.asarray(predictions), Y_test_np, ts)
+    currents = [0, 0, 0]
+    currents[Metrics.dTPR.value], dFPR = get_equalised_odds(
+        Z_test_race_included, np.asarray(predictions), Y_test_np, ts)
+    currents[Metrics.SP.value] = get_statistical_parity(Z_test_race_included, np.asarray(predictions), Y_test_np, ts)
 
-    zs_dTPR.append(dTPR)
-    zs_dFPR.append(dFPR)
-    zs_SP.append(SP)
+    for met in Metrics:
+        zs[met.value].append(currents[met.value])
 
-    if (min[Metrics.dTPR.value] > dTPR):
-        # print("new min dTPR "+str(min[Metrics.dTPR.value]))
-        min[Metrics.dTPR.value] = dTPR
-        min_ts[Metrics.dTPR.value] = ts
+        if (min[met.value] > currents[met.value]):
+            min[met.value] = currents[met.value]
+            min_ts[met.value] = ts
 
-    if (min[Metrics.dFPR.value] > dFPR):
-        # print("new min dFPR "+str(min[Metrics.dTPR.value]))
-        min[Metrics.dFPR.value] = dFPR
-        min_ts[Metrics.dFPR.value] = ts
-
-    if (min[Metrics.SP.value] > SP):
-        # print("new min SP "+str(min[Metrics.SP.value]))
-        min[Metrics.SP.value] = SP
-        min_ts[Metrics.SP.value] = ts
     count += 1
+
 print("count= "+str(count))
-zs.append(zs_dTPR)
-zs.append(zs_dFPR)
-zs.append(zs_SP)
+zs_all = []
+for met in Metrics:
+    zs_all.append(zs[met.valuet])
 
 print("")
 switch_costs = np.zeros((len(Metrics), len(Metrics)))
 for met_i in Metrics:
 
-    fairness_2D_graphs(met_i, thresholds, np.asarray(zs[met_i.value]))
+    fairness_2D_graphs(met_i, thresholds, np.asarray(zs_all[met_i.value]))
 
     print("min "+met_i.name+" = "+str(min[met_i.value])+" at "+str(min_ts[met_i.value]))
     cms = get_confusion_matrices(Z_test_race_included, np.asarray(predictions), Y_test_np, min_ts[met_i.value])
