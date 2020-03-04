@@ -79,7 +79,7 @@ def fairness_2D_graphs(metric, thresholds, zs):
     axes = plt.gca()
     axes.set_xlim([0, 1])
     axes.set_ylim([0, 1])
-    p = ax.scatter(np.asarray(xs), np.asarray(ys), c=np.log(zs), cmap=cm.jet)
+    p = ax.scatter(np.asarray(xs), np.asarray(ys), c=np.log(zs), cmap=cm.jet, s=5, marker='s')
     fig.colorbar(p)
     plt.show()
 
@@ -108,7 +108,7 @@ def fairness_3D_graphs(metric, thresholds, zs):
 
 
 def print_confusion_matrix(M):
-    print("		  | PRED: NO | PRED: YES |")
+    print("          | PRED: NO | PRED: YES |")
     print("-------------------------------")
     print("ACTL:   NO| "+str(round(M[0, 0], 3)) +
           "	| "+str(round(M[0, 1], 3))+"	 |")
@@ -636,8 +636,8 @@ for i in range(0, inputs):
 print("done")
 
 # plot_hist(Z_test_race_included, predictions)
-# thresholds = get_threshold_pairs(Z_test_race_included, np.asarray(predictions), BASE * len(predictions))
-thresholds = get_best_pairs(Z_test_race_included, np.asarray(predictions), BASE * len(predictions))
+thresholds = get_threshold_pairs(Z_test_race_included, np.asarray(predictions), BASE * len(predictions))
+# thresholds = get_best_pairs(Z_test_race_included, np.asarray(predictions), BASE * len(predictions))
 # thresholds = get_threshold_pairs(Z_test_race_included, np.asarray(predictions), BASE * len(predictions), 1.0)
 
 min = []
@@ -647,11 +647,12 @@ currents = []
 for met in Metrics:
     min.append(10000)
     min_ts.append([0, 0])
+    zs.append([])
 
 count = 0
 for ts in thresholds:
     currents = [0, 0, 0]
-    currents[Metrics.dTPR.value], dFPR = get_equalised_odds(
+    currents[Metrics.dTPR.value], currents[Metrics.dFPR.value] = get_equalised_odds(
         Z_test_race_included, np.asarray(predictions), Y_test_np, ts)
     currents[Metrics.SP.value] = get_statistical_parity(Z_test_race_included, np.asarray(predictions), Y_test_np, ts)
 
@@ -667,7 +668,7 @@ for ts in thresholds:
 print("count= "+str(count))
 zs_all = []
 for met in Metrics:
-    zs_all.append(zs[met.valuet])
+    zs_all.append(zs[met.value])
 
 print("")
 switch_costs = np.zeros((len(Metrics), len(Metrics)))
